@@ -16,11 +16,19 @@ use std::{
 };
 use tracing::{error, info, trace, warn};
 
+/// Per-peer settings. Peers that are connected to the same host, as well as the host itself, should have the same settings.
 #[derive(Debug, Clone)]
 pub struct Settings {
+    /// A single datagram will confirm at most this much messages. Default is 128.
     pub confirm_max_per_message: usize,
+    /// How much time can elapse before another confirm is sent.
+    /// Confirms are also sent when enough messages are awaiting confirm.
+    /// Note that confirms also double as "heatbeats" and keep the connection alive, so this value should be much less than `connection_timeout`.
+    /// Default: 1 second.
     pub confirm_max_period: Duration,
-    pub connection_timeout: Duration, //TODO disconnect after a timeout
+    /// Peers will be disconnected after this much time without any datagrams from them has passed.
+    /// Default: 1 second.
+    pub connection_timeout: Duration,
 }
 
 impl Default for Settings {
@@ -250,6 +258,7 @@ impl Reactor {
                         if let Destination::One(id) = dst {
                             self.shared.my_id.store(Some(id));
                             self.add_peer(PeerId(0));
+                            self.shared.peer_state.store(PeerState::Connected);
                         } else {
                             warn!("Malformed registration message");
                         }
@@ -412,6 +421,10 @@ impl Reactor {
                     info!("[Host] Peer {} removed", peer_id);
                 }
             }
+            if !self.is_host() && self.direct_peers.len() == 0 {
+                self.shared.peer_state.store(PeerState::Disconnected);
+                self.shared.keep_alive.store(false, SeqCst);
+            }
             'peers: for (&id, peer) in self.direct_peers.iter_mut() {
                 let resend_in = Instant::now() + Duration::from_secs(1);
 
@@ -528,6 +541,9 @@ impl Reactor {
                 ),
             );
             me.direct_send(PeerId(0), NetMessageVariant::Login).unwrap();
+        }
+        if me.is_host() {
+            me.shared.peer_state.store(PeerState::Connected);
         }
         let shared_c = Arc::clone(&me.shared);
         let (inbound_s, inbound_r) = bounded(16);

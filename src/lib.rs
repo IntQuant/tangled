@@ -1,3 +1,5 @@
+//! Tangled - a work-in-progress UDP networking crate.
+
 use std::{
     fmt::Display, io, net::{SocketAddr, UdpSocket}, sync::{atomic::AtomicBool, Arc}
 };
@@ -7,11 +9,14 @@ use crossbeam::{
 };
 
 pub use error::NetError;
-use reactor::{Destination, Reliability, RemotePeer, Settings, Shared};
+use reactor::{Destination, RemotePeer, Shared};
+pub use reactor::{Reliability, Settings};
 use serde::{Deserialize, Serialize};
 
 const DATAGRAM_MAX_LEN: usize = 1500;
-const MAX_MESSAGE_LEN: usize = 1200;
+
+/// Maximum size of a message which fits into a single datagram.
+pub const MAX_MESSAGE_LEN: usize = 1200;
 
 mod error;
 mod reactor;
@@ -40,22 +45,29 @@ pub struct ReceivedMessage {
     pub data: Vec<u8>,
 }
 
-pub struct Message {
+struct Message {
     pub dst: Destination,
     pub data: Vec<u8>,
     pub reliability: Reliability,
 }
 
-#[derive(Default)]
+/// Current peer state
+#[derive(Default, Clone, Copy)]
 pub enum PeerState {
+    /// Waiting for connection. Switches to `Connected` right after id from the host has been acquired.
+    /// Note: hosts switches to 'Connected' basically instantly.
     #[default]
     PendingConnection,
+    /// Connected to host and ready to send/receive messages.
     Connected,
+    /// No longer connected, won't reconnect.
     Disconnected,
 }
 
 type Channel<T> = (Sender<T>, Receiver<T>);
 
+/// Represents a network endpoint. Can be constructed in either `host` or `client` mode.
+/// Client can only connect to hosts, but they are able to send messages to any other peer connected to the same host, including the host itself.
 #[derive(Clone)]
 pub struct Peer {
     shared: Arc<Shared>,
@@ -92,20 +104,20 @@ impl Peer {
         Ok(Peer { shared })
     }
 
-    /// Host at a specified bind_addr.
+    /// Host at a specified `bind_addr`.
     pub fn host(bind_addr: SocketAddr, settings: Option<Settings>) -> io::Result<Self> {
         Self::new(bind_addr, None, settings)
     }
 
-    /// Connect to a specified host_addr.
+    /// Connect to a specified `host_addr`.
     pub fn connect(host_addr: SocketAddr, settings: Option<Settings>) -> io::Result<Self> {
         Self::new("0.0.0.0:0".parse().unwrap(), Some(host_addr), settings)
     }
 
-    /// Send a message to a specified destionation.
+    /// Send a message to a specified single peer.
     pub fn send(
         &self,
-        dst: Destination,
+        destination: PeerId,
         data: Vec<u8>,
         reliability: Reliability,
     ) -> Result<(), NetError> {
@@ -118,7 +130,7 @@ impl Peer {
             return Err(NetError::Dropped);
         }
         self.shared.outbound_channel.0.send(Message {
-            dst,
+            dst: Destination::One(destination),
             data,
             reliability,
         })?;
@@ -135,6 +147,10 @@ impl Peer {
     /// None is returned when not connected yet.
     pub fn my_id(&self) -> Option<PeerId> {
         self.shared.my_id.load()
+    }
+
+    pub fn state(&self) -> PeerState {
+        self.shared.peer_state.load()
     }
 }
 
@@ -168,7 +184,7 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 2);
         let data = vec![128, 51, 32];
         peer.send(
-            crate::reactor::Destination::One(PeerId(0)),
+            PeerId(0),
             data.clone(),
             crate::reactor::Reliability::Reliable,
         )

@@ -4,11 +4,16 @@ use crossbeam::channel::SendError;
 
 use crate::MAX_MESSAGE_LEN;
 
+/// Describes possible errors
 #[derive(Debug)]
 pub enum NetError {
+    /// Tried to use an invalid peer id.
     UnknownPeer,
+    /// Peer is not able to communicate with other peers anymore.
     Disconnected,
+    /// Tried to send a message longer than `MAX_MESSAGE_LEN`.
     MessageTooLong,
+    /// Unreliable message was instantly dropped because there are too many packets waiting to be sent.
     Dropped,
 }
 
