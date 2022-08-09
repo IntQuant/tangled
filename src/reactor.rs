@@ -139,7 +139,7 @@ impl Reactor {
 
     fn direct_broadcast(
         &mut self,
-        my_id: u16,
+        my_id: PeerId,
         msg: NetMessageInner,
         reliability: Reliability,
     ) -> Result<(), NetError> {
@@ -170,12 +170,10 @@ impl Reactor {
     }
 
     fn gen_peer_id(&mut self) -> Option<PeerId> {
-        for i in 1..=u16::MAX {
-            if !self.shared.remote_peers.contains_key(&i) {
-                return Some(i);
-            }
-        }
-        None
+        (1..=u16::MAX)
+            .map(|i| PeerId(i))
+            .filter(|i| !self.shared.remote_peers.contains_key(i))
+            .next()
     }
 
     fn handle_inbound(&mut self, (incoming_addr, msg_raw): AddrDatagram) {
@@ -248,10 +246,10 @@ impl Reactor {
                         .shared
                         .host_addr
                         .expect("Can't have both my_id and host_addr be None");
-                    if incoming_addr == expected_host_addr && src == 0 {
+                    if incoming_addr == expected_host_addr && src == PeerId(0) {
                         if let Destination::One(id) = dst {
                             self.shared.my_id.store(Some(id));
-                            self.add_peer(0);
+                            self.add_peer(PeerId(0));
                         } else {
                             warn!("Malformed registration message");
                         }
@@ -268,7 +266,7 @@ impl Reactor {
         &mut self,
         msg: NetMessageNormal,
         _incoming_addr: SocketAddr,
-        my_id: u16,
+        my_id: PeerId,
     ) -> Result<(), NetError> {
         let peer = self.direct_peers.get_mut(&msg.src);
         if peer
@@ -351,19 +349,19 @@ impl Reactor {
                     self.direct_send(id, net_msg)?;
                 }
                 Destination::Broadcast => self.direct_broadcast(
-                    0,
+                    PeerId(0),
                     NetMessageInner::Payload { data: msg.data },
                     msg.reliability,
                 )?,
             }
         } else {
             let net_msg = self.wrap_packet(
-                0,
+                PeerId(0),
                 dst,
                 NetMessageInner::Payload { data: msg.data },
                 msg.reliability,
             )?;
-            self.direct_send(0, net_msg)?;
+            self.direct_send(PeerId(0), net_msg)?;
         }
         Ok(())
     }
@@ -378,7 +376,7 @@ impl Reactor {
             .get(&peer_id)
             .or_else(|| {
                 if !self.is_host() {
-                    self.direct_peers.get(&0)
+                    self.direct_peers.get(&PeerId(0))
                 } else {
                     None
                 }
@@ -521,7 +519,7 @@ impl Reactor {
         };
         if !me.is_host() {
             me.direct_peers.insert(
-                0,
+                PeerId(0),
                 DirectPeer::new(
                     me.shared
                         .host_addr
@@ -529,7 +527,7 @@ impl Reactor {
                     me.shared.max_packets_per_second,
                 ),
             );
-            me.direct_send(0, NetMessageVariant::Login).unwrap();
+            me.direct_send(PeerId(0), NetMessageVariant::Login).unwrap();
         }
         let shared_c = Arc::clone(&me.shared);
         let (inbound_s, inbound_r) = bounded(16);

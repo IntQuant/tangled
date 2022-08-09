@@ -1,18 +1,19 @@
 use std::{
-    io, net::{SocketAddr, UdpSocket}, sync::{atomic::AtomicBool, Arc}
+    fmt::Display, io, net::{SocketAddr, UdpSocket}, sync::{atomic::AtomicBool, Arc}
 };
 
 use crossbeam::{
     self, atomic::AtomicCell, channel::{unbounded, Receiver, Sender}
 };
 
-use error::NetError;
+pub use error::NetError;
 use reactor::{Destination, Reliability, RemotePeer, Settings, Shared};
+use serde::{Deserialize, Serialize};
 
 const DATAGRAM_MAX_LEN: usize = 1500;
 const MAX_MESSAGE_LEN: usize = 1200;
 
-pub mod error;
+mod error;
 mod reactor;
 mod util;
 
@@ -21,8 +22,18 @@ struct Datagram {
     pub data: [u8; DATAGRAM_MAX_LEN],
 }
 
-pub type PeerId = u16;
-pub type SeqId = u16;
+/// A value which refers to a specific peer.
+/// Peer 0 is always the host.
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub struct PeerId(u16);
+
+impl Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+type SeqId = u16;
 
 pub struct ReceivedMessage {
     pub src: PeerId,
@@ -67,24 +78,31 @@ impl Peer {
             peer_state: Default::default(),
             remote_peers: Default::default(),
             max_packets_per_second: 256,
-            my_id: AtomicCell::new(if host_addr.is_none() { Some(0) } else { None }),
+            my_id: AtomicCell::new(if host_addr.is_none() {
+                Some(PeerId(0))
+            } else {
+                None
+            }),
             settings: settings.unwrap_or_default(),
         });
         if host_addr.is_none() {
-            shared.remote_peers.insert(0, RemotePeer::default());
+            shared.remote_peers.insert(PeerId(0), RemotePeer::default());
         }
         reactor::Reactor::start(Arc::clone(&shared));
         Ok(Peer { shared })
     }
 
+    /// Host at a specified bind_addr.
     pub fn host(bind_addr: SocketAddr, settings: Option<Settings>) -> io::Result<Self> {
         Self::new(bind_addr, None, settings)
     }
 
+    /// Connect to a specified host_addr.
     pub fn connect(host_addr: SocketAddr, settings: Option<Settings>) -> io::Result<Self> {
         Self::new("0.0.0.0:0".parse().unwrap(), Some(host_addr), settings)
     }
 
+    /// Send a message to a specified destionation.
     pub fn send(
         &self,
         dst: Destination,
@@ -107,8 +125,16 @@ impl Peer {
         Ok(())
     }
 
+    /// Return an iterator over recieved messages.
+    /// Does not block.
     pub fn recv(&self) -> impl Iterator<Item = ReceivedMessage> + '_ {
         self.shared.inbound_channel.1.try_iter()
+    }
+
+    /// Returns own `PeerId`, whcih can be used by any remote peer to send a message to this one.
+    /// None is returned when not connected yet.
+    pub fn my_id(&self) -> Option<PeerId> {
+        self.shared.my_id.load()
     }
 }
 
@@ -124,7 +150,7 @@ impl Drop for Peer {
 mod test {
     use std::{thread, time::Duration};
 
-    use crate::{reactor::Settings, Peer};
+    use crate::{reactor::Settings, Peer, PeerId};
 
     #[test_log::test]
     fn test_peer() {
@@ -142,7 +168,7 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 2);
         let data = vec![128, 51, 32];
         peer.send(
-            crate::reactor::Destination::One(0),
+            crate::reactor::Destination::One(PeerId(0)),
             data.clone(),
             crate::reactor::Reliability::Reliable,
         )
