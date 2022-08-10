@@ -87,9 +87,13 @@ enum NetMessageVariant {
     Normal(NetMessageNormal),
 }
 
+/// Tells how reliable a message is.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Reliability {
+    /// Message will be delivered at most once.
     Unreliable,
+    /// Message will be resent untill is's arrival will be confirmed.
+    /// Will be delivered at most once.
     Reliable,
 }
 

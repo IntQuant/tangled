@@ -40,16 +40,22 @@ impl Display for PeerId {
 
 type SeqId = u16;
 
+/// Possible network events, returned by `Peer.recv()`.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum NetworkEvent {
+    /// A new peer has connected.
     PeerConnected(PeerId),
+    /// Peer has disconnected.
     PeerDisconnected(PeerId),
+    /// Message has been received.
     Message(Message),
 }
 
+/// A message received from a peer.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     //src: PeerId,
+    /// The data that has been sent.
     pub data: Vec<u8>,
 }
 
