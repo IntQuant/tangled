@@ -67,13 +67,8 @@ struct DirectPeer {
     last_seen: Instant,
 }
 
+#[derive(Default)]
 pub struct RemotePeer {}
-
-impl Default for RemotePeer {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
 pub enum Destination {
@@ -160,7 +155,7 @@ impl Reactor {
         msg: NetMessageInner,
         reliability: Reliability,
     ) -> Result<(), NetError> {
-        Ok(for (&peer_id, peer) in self.direct_peers.iter_mut() {
+        for (&peer_id, peer) in self.direct_peers.iter_mut() {
             let new_seq_id = peer.seq_counter.fetch_add(1, SeqCst);
             let new_msg = Self::wrap_packet_seq_id(
                 my_id,
@@ -170,7 +165,8 @@ impl Reactor {
                 reliability,
             )?;
             Self::direct_send_peer(peer, new_msg)?;
-        })
+        }
+        Ok(())
     }
 
     fn direct_send(&mut self, id: PeerId, msg: NetMessageVariant) -> Result<(), NetError> {
@@ -188,9 +184,8 @@ impl Reactor {
 
     fn gen_peer_id(&mut self) -> Option<PeerId> {
         (1..=u16::MAX)
-            .map(|i| PeerId(i))
-            .filter(|i| !self.shared.remote_peers.contains_key(i))
-            .next()
+            .map(PeerId)
+            .find(|i| !self.shared.remote_peers.contains_key(i))
     }
 
     fn handle_inbound(&mut self, (incoming_addr, msg_raw): AddrDatagram) {
@@ -343,24 +338,19 @@ impl Reactor {
                         .send(NetworkEvent::Message(Message { data }))?;
                 }
             }
-        } else {
-            if self.is_host() {
-                match msg.dst {
-                    Destination::One(dst) => {
-                        let new_msg = self.wrap_packet(
-                            dst,
-                            Destination::One(dst),
-                            msg.inner,
-                            msg.reliability,
-                        )?;
-                        self.direct_send(dst, new_msg)?;
-                    }
-                    Destination::Broadcast => {
-                        self.direct_broadcast(my_id, msg.inner, msg.reliability)?;
-                    }
+        } else if self.is_host() {
+            match msg.dst {
+                Destination::One(dst) => {
+                    let new_msg =
+                        self.wrap_packet(dst, Destination::One(dst), msg.inner, msg.reliability)?;
+                    self.direct_send(dst, new_msg)?;
+                }
+                Destination::Broadcast => {
+                    self.direct_broadcast(my_id, msg.inner, msg.reliability)?;
                 }
             }
         }
+
         Ok(())
     }
 
@@ -450,7 +440,7 @@ impl Reactor {
                     info!("[Host] Peer {} removed", peer_id);
                 }
             }
-            if !self.is_host() && self.direct_peers.len() == 0 {
+            if !self.is_host() && self.direct_peers.is_empty() {
                 self.shared.peer_state.store(PeerState::Disconnected);
                 self.shared.keep_alive.store(false, SeqCst);
             }
@@ -545,7 +535,7 @@ impl Reactor {
                             data: buf,
                         },
                     ))
-                    .map_err(|e| Box::new(e))?,
+                    .map_err(Box::new)?,
                 //Err(err)
                 //    if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {
                 //}

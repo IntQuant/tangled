@@ -1,4 +1,4 @@
-//! Tangled - a work&&-in-progress UDP networking crate.
+//! Tangled - a work-in-progress UDP networking crate.
 
 use std::{
     fmt::Display, io, net::{SocketAddr, UdpSocket}, sync::{atomic::AtomicBool, Arc}
@@ -139,7 +139,7 @@ impl Peer {
             return Err(NetError::MessageTooLong);
         }
         if reliability == Reliability::Unreliable
-            && self.shared.outbound_channel.0.len() * 2 > self.shared.max_packets_per_second.into()
+            && self.shared.outbound_channel.0.len() * 2 > self.shared.max_packets_per_second
         {
             return Err(NetError::Dropped);
         }
