@@ -1,4 +1,4 @@
-//! Tangled - a work-in-progress UDP networking crate.
+//! Tangled - a work&&-in-progress UDP networking crate.
 
 use std::{
     fmt::Display, io, net::{SocketAddr, UdpSocket}, sync::{atomic::AtomicBool, Arc}
@@ -30,7 +30,7 @@ struct Datagram {
 /// A value which refers to a specific peer.
 /// Peer 0 is always the host.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-pub struct PeerId(u16);
+pub struct PeerId(pub u16);
 
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,19 +40,27 @@ impl Display for PeerId {
 
 type SeqId = u16;
 
-pub struct ReceivedMessage {
-    pub src: PeerId,
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum NetworkEvent {
+    PeerConnected(PeerId),
+    PeerDisconnected(PeerId),
+    Message(Message),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Message {
+    //src: PeerId,
     pub data: Vec<u8>,
 }
 
-struct Message {
+struct OutboundMessage {
     pub dst: Destination,
     pub data: Vec<u8>,
     pub reliability: Reliability,
 }
 
 /// Current peer state
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub enum PeerState {
     /// Waiting for connection. Switches to `Connected` right after id from the host has been acquired.
     /// Note: hosts switches to 'Connected' basically instantly.
@@ -129,7 +137,7 @@ impl Peer {
         {
             return Err(NetError::Dropped);
         }
-        self.shared.outbound_channel.0.send(Message {
+        self.shared.outbound_channel.0.send(OutboundMessage {
             dst: Destination::One(destination),
             data,
             reliability,
@@ -139,8 +147,14 @@ impl Peer {
 
     /// Return an iterator over recieved messages.
     /// Does not block.
-    pub fn recv(&self) -> impl Iterator<Item = ReceivedMessage> + '_ {
+    pub fn recv(&self) -> impl Iterator<Item = NetworkEvent> + '_ {
         self.shared.inbound_channel.1.try_iter()
+    }
+
+    /// Return an iterator over recieved messages.
+    /// Blocking.
+    pub fn recv_blocking(&self) -> impl Iterator<Item = NetworkEvent> + '_ {
+        self.shared.inbound_channel.1.iter()
     }
 
     /// Returns own `PeerId`, whcih can be used by any remote peer to send a message to this one.
@@ -149,8 +163,17 @@ impl Peer {
         self.shared.my_id.load()
     }
 
+    /// Current state of the peer.
     pub fn state(&self) -> PeerState {
         self.shared.peer_state.load()
+    }
+
+    /// Iterate over connected peers, returning ther `PeerId`.
+    pub fn iter_peer_ids(&self) -> impl Iterator<Item = PeerId> + '_ {
+        self.shared
+            .remote_peers
+            .iter()
+            .map(|item| item.key().to_owned())
     }
 }
 
@@ -166,7 +189,7 @@ impl Drop for Peer {
 mod test {
     use std::{thread, time::Duration};
 
-    use crate::{reactor::Settings, Peer, PeerId};
+    use crate::{reactor::Settings, Message, NetworkEvent, Peer, PeerId, Reliability};
 
     #[test_log::test]
     fn test_peer() {
@@ -183,16 +206,20 @@ mod test {
         assert_eq!(peer.shared.remote_peers.len(), 2);
         assert_eq!(host.shared.remote_peers.len(), 2);
         let data = vec![128, 51, 32];
-        peer.send(
-            PeerId(0),
-            data.clone(),
-            crate::reactor::Reliability::Reliable,
-        )
-        .unwrap();
+        peer.send(PeerId(0), data.clone(), Reliability::Reliable)
+            .unwrap();
         thread::sleep(Duration::from_millis(10));
-        assert_eq!(host.recv().next().unwrap().data, data);
+        let host_events: Vec<_> = host.recv().collect();
+        assert!(host_events.contains(&NetworkEvent::PeerConnected(PeerId(1))));
+        assert!(host_events.contains(&NetworkEvent::Message(Message { data })));
+        let peer_events: Vec<_> = peer.recv().collect();
+        assert!(peer_events.contains(&NetworkEvent::PeerConnected(PeerId(0))));
         drop(peer);
         thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            host.recv().next(),
+            Some(NetworkEvent::PeerDisconnected(PeerId(1)))
+        );
         assert_eq!(host.shared.remote_peers.len(), 1);
     }
 }

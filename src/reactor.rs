@@ -1,5 +1,5 @@
 use crate::{
-    error::NetError, util::{RateLimiter, RingSet}, Channel, Message, PeerId, ReceivedMessage, SeqId
+    error::NetError, util::{RateLimiter, RingSet}, Channel, Message, NetworkEvent, OutboundMessage, PeerId, SeqId
 };
 
 use super::{Datagram, PeerState, DATAGRAM_MAX_LEN};
@@ -23,7 +23,7 @@ pub struct Settings {
     pub confirm_max_per_message: usize,
     /// How much time can elapse before another confirm is sent.
     /// Confirms are also sent when enough messages are awaiting confirm.
-    /// Note that confirms also double as "heatbeats" and keep the connection alive, so this value should be much less than `connection_timeout`.
+    /// Note that confirms also double as "heartbeats" and keep the connection alive, so this value should be much less than `connection_timeout`.
     /// Default: 1 second.
     pub confirm_max_period: Duration,
     /// Peers will be disconnected after this much time without any datagrams from them has passed.
@@ -44,8 +44,8 @@ impl Default for Settings {
 pub(crate) struct Shared {
     pub settings: Settings,
     pub socket: UdpSocket,
-    pub inbound_channel: Channel<ReceivedMessage>,
-    pub outbound_channel: Channel<Message>,
+    pub inbound_channel: Channel<NetworkEvent>,
+    pub outbound_channel: Channel<OutboundMessage>,
     pub keep_alive: AtomicBool,
     pub peer_state: AtomicCell<PeerState>,
     pub remote_peers: DashMap<PeerId, RemotePeer>,
@@ -141,8 +141,13 @@ pub(crate) struct Reactor {
 type AddrDatagram = (SocketAddr, Datagram);
 
 impl Reactor {
-    fn add_peer(&self, id: PeerId) {
+    fn add_peer(&self, id: PeerId) -> Result<(), NetError> {
         self.shared.remote_peers.insert(id, RemotePeer::default());
+        self.shared
+            .inbound_channel
+            .0
+            .send(NetworkEvent::PeerConnected(id))?;
+        Ok(())
     }
 
     fn direct_broadcast(
@@ -200,9 +205,7 @@ impl Reactor {
                             //TODO check this addr is not already registered
                             match self.gen_peer_id() {
                                 Some(new_id) => {
-                                    self.shared
-                                        .remote_peers
-                                        .insert(new_id, RemotePeer::default());
+                                    self.add_peer(new_id).ok();
                                     let mut peer = DirectPeer::new(
                                         incoming_addr,
                                         self.shared.max_packets_per_second,
@@ -225,6 +228,20 @@ impl Reactor {
                                         Reliability::Reliable,
                                     )
                                     .ok();
+                                    let shared = self.shared.clone();
+                                    for re in shared.remote_peers.iter() {
+                                        let id = *re.key();
+                                        if id != new_id {
+                                            self.wrap_packet(
+                                                id,
+                                                Destination::One(new_id),
+                                                NetMessageInner::AddPeer { id },
+                                                Reliability::Reliable,
+                                            )
+                                            .and_then(|msg| self.direct_send(new_id, msg))
+                                            .ok();
+                                        }
+                                    }
                                 }
                                 None => warn!("Out of ids"),
                             }
@@ -257,7 +274,7 @@ impl Reactor {
                     if incoming_addr == expected_host_addr && src == PeerId(0) {
                         if let Destination::One(id) = dst {
                             self.shared.my_id.store(Some(id));
-                            self.add_peer(PeerId(0));
+                            self.add_peer(PeerId(0)).ok();
                             self.shared.peer_state.store(PeerState::Connected);
                         } else {
                             warn!("Malformed registration message");
@@ -298,13 +315,13 @@ impl Reactor {
                 }
                 NetMessageInner::AddPeer { id } => {
                     if !self.is_host() {
-                        self.add_peer(id);
+                        self.add_peer(id).ok();
                         info!("Peer {} added", id);
                     }
                 }
                 NetMessageInner::DelPeer { id } => {
                     if !self.is_host() {
-                        self.shared.remote_peers.remove(&id);
+                        self.del_peer(id).ok();
                         info!("Peer {} removed", id);
                     }
                 }
@@ -319,8 +336,7 @@ impl Reactor {
                     self.shared
                         .inbound_channel
                         .0
-                        .send(ReceivedMessage { src: msg.src, data })
-                        .unwrap();
+                        .send(NetworkEvent::Message(Message { data }))?;
                 }
             }
         } else {
@@ -344,7 +360,16 @@ impl Reactor {
         Ok(())
     }
 
-    fn handle_outbound(&mut self, msg: Message) -> Result<(), NetError> {
+    fn del_peer(&mut self, id: PeerId) -> Result<(), NetError> {
+        self.shared.remote_peers.remove(&id);
+        self.shared
+            .inbound_channel
+            .0
+            .send(NetworkEvent::PeerDisconnected(id))?;
+        Ok(())
+    }
+
+    fn handle_outbound(&mut self, msg: OutboundMessage) -> Result<(), NetError> {
         let dst = msg.dst;
         if self.is_host() {
             match dst {
@@ -417,7 +442,7 @@ impl Reactor {
                         NetMessageInner::DelPeer { id: peer_id },
                         Reliability::Reliable,
                     )?;
-                    self.shared.remote_peers.remove(&peer_id);
+                    self.del_peer(peer_id).ok();
                     info!("[Host] Peer {} removed", peer_id);
                 }
             }
@@ -433,6 +458,7 @@ impl Reactor {
                         || peer.pending_confirms.len()
                             > self.shared.settings.confirm_max_per_message
                     {
+                        peer.last_confirm_sent = Instant::now();
                         let max_per_message = self.shared.settings.confirm_max_per_message;
                         let mut confirmed_ids = Vec::with_capacity(max_per_message);
                         while let Some(confirm) = peer.pending_confirms.pop_front() {
@@ -469,14 +495,14 @@ impl Reactor {
                             peer.resend_pending.push_front((moment, msg));
                             continue 'peers;
                         }
+                        peer.resend_pending.push_back((resend_in, msg.clone()));
+                        trace!("Sent {:?} to {}", msg, peer.addr);
+                        let datagram = Datagram::try_from(&NetMessageVariant::Normal(msg)).unwrap();
+                        self.shared
+                            .socket
+                            .send_to(&datagram.data[..datagram.size], peer.addr)
+                            .expect("Could not send");
                     }
-                    peer.resend_pending.push_back((resend_in, msg.clone()));
-                    trace!("Sent {:?} to {}", msg, peer.addr);
-                    let datagram = Datagram::try_from(&NetMessageVariant::Normal(msg)).unwrap();
-                    self.shared
-                        .socket
-                        .send_to(&datagram.data[..datagram.size], peer.addr)
-                        .expect("Could not send");
                 }
 
                 while !peer.outbound_pending.is_empty() && peer.rate_limit.get_token() {
