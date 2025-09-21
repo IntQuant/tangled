@@ -15,6 +15,7 @@ pub enum NetError {
     MessageTooLong,
     /// Unreliable message was instantly dropped because there are too many packets waiting to be sent.
     Dropped,
+    Other,
 }
 
 impl Display for NetError {
@@ -23,9 +24,10 @@ impl Display for NetError {
             NetError::UnknownPeer => write!(f, "No peer with this id"),
             NetError::Disconnected => write!(f, "Not connected"),
             NetError::MessageTooLong => {
-                write!(f, "Message len exceeds the limit of {}", MAX_MESSAGE_LEN)
+                write!(f, "Message len exceeds the limit of {MAX_MESSAGE_LEN}")
             }
             NetError::Dropped => write!(f, "Message dropped"),
+            NetError::Other => write!(f, "Other"),
         }
     }
 }
