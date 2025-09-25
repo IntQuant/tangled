@@ -56,7 +56,7 @@ pub struct Message {
     /// Original peer who sent the message.
     pub src: PeerId,
     /// The data that has been sent.
-    pub data: Vec<u8>,
+    pub data: Box<[u8]>,
 }
 
 /// Current peer state

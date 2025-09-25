@@ -73,20 +73,20 @@ impl Peer {
     pub fn send(
         &self,
         destination: PeerId,
-        data: Vec<u8>,
+        data: &[u8],
         reliability: Reliability,
     ) -> Result<(), NetError> {
         self.send_internal(Destination::One(destination), data, reliability)
     }
 
-    pub fn broadcast(&self, data: Vec<u8>, reliability: Reliability) -> Result<(), NetError> {
+    pub fn broadcast(&self, data: &[u8], reliability: Reliability) -> Result<(), NetError> {
         self.send_internal(Destination::Broadcast, data, reliability)
     }
 
     fn send_internal(
         &self,
         destination: Destination,
-        data: Vec<u8>,
+        data: &[u8],
         reliability: Reliability,
     ) -> Result<(), NetError> {
         self.shared
@@ -94,7 +94,7 @@ impl Peer {
             .send(OutboundMessage {
                 src: self.my_id().expect("expected to know my_id by this point"),
                 dst: destination,
-                data,
+                data: data.into(),
                 reliability,
             })
             .expect("channel to be open");
@@ -166,13 +166,12 @@ mod test {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(peer.shared.remote_peers.len(), 2);
         let data = vec![128, 51, 32];
-        peer.send(PeerId(0), data.clone(), Reliability::Reliable)
-            .unwrap();
+        peer.send(PeerId(0), &data, Reliability::Reliable).unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
         let host_events: Vec<_> = host.recv().collect();
         assert!(host_events.contains(&NetworkEvent::PeerConnected(PeerId(1))));
         assert!(host_events.contains(&NetworkEvent::Message(Message {
-            data,
+            data: data.into_boxed_slice(),
             src: PeerId(1)
         })));
         let peer_events: Vec<_> = peer.recv().collect();
@@ -195,13 +194,11 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 1);
         let peer1 = Peer::connect(addr, settings.clone()).unwrap();
         let peer2 = Peer::connect(addr, settings.clone()).unwrap();
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(host.shared.remote_peers.len(), 3);
 
         let data = vec![123, 112, 51, 23];
-        peer1
-            .broadcast(data.clone(), Reliability::Reliable)
-            .unwrap();
+        peer1.broadcast(&data, Reliability::Reliable).unwrap();
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let host_events: Vec<_> = dbg!(host.recv().collect());
@@ -210,15 +207,15 @@ mod test {
 
         assert!(peer2_events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: data.clone(),
+            data: data.clone().into_boxed_slice(),
         })));
         assert!(!peer1_events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: data.clone(),
+            data: data.clone().into_boxed_slice(),
         })));
         assert!(host_events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: data.clone(),
+            data: data.into_boxed_slice(),
         })));
     }
 
@@ -263,13 +260,13 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 1);
         let peer1 = Peer::connect(addr, settings.clone()).unwrap();
         let peer2 = Peer::connect(addr, settings.clone()).unwrap();
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(host.shared.remote_peers.len(), 3);
 
         peer1
             .send(
                 peer2.my_id().unwrap(),
-                vec![123, 32, 51],
+                &[123, 32, 51],
                 Reliability::Reliable,
             )
             .unwrap();
@@ -277,7 +274,7 @@ mod test {
         let events = peer2.recv().collect::<Vec<_>>();
         assert!(events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: vec![123, 32, 51],
+            data: vec![123, 32, 51].into_boxed_slice(),
         })))
     }
 
@@ -289,13 +286,13 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 1);
         let peer1 = Peer::connect(addr, settings.clone()).unwrap();
         let peer2 = Peer::connect(addr, settings.clone()).unwrap();
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(host.shared.remote_peers.len(), 3);
 
         peer1
             .send(
                 peer2.my_id().unwrap(),
-                vec![123, 32, 51],
+                &[123, 32, 51],
                 Reliability::Reliable,
             )
             .unwrap();
@@ -303,7 +300,7 @@ mod test {
         let events = peer2.recv().collect::<Vec<_>>();
         assert!(events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: vec![123, 32, 51],
+            data: vec![123, 32, 51].into_boxed_slice(),
         })))
     }
 
@@ -317,13 +314,13 @@ mod test {
         assert_eq!(host.shared.remote_peers.len(), 1);
         let peer1 = Peer::connect(addr, settings.clone()).unwrap();
         let peer2 = Peer::connect(addr2, settings.clone()).unwrap();
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(host.shared.remote_peers.len(), 3);
 
         peer1
             .send(
                 peer2.my_id().unwrap(),
-                vec![123, 32, 51],
+                &[123, 32, 51],
                 Reliability::Reliable,
             )
             .unwrap();
@@ -331,7 +328,7 @@ mod test {
         let events = peer2.recv().collect::<Vec<_>>();
         assert!(events.contains(&NetworkEvent::Message(Message {
             src: peer1.my_id().unwrap(),
-            data: vec![123, 32, 51],
+            data: vec![123, 32, 51].into_boxed_slice(),
         })))
     }
 }
