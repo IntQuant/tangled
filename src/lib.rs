@@ -2,11 +2,11 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use connection_manager::{
-    ConnectionManager, OutboundMessage, RemotePeer, Shared, TangledInitError,
-};
+use connection_manager::{ConnectionManager, OutboundMessage, RemotePeer, Shared};
 
 pub use error::NetError;
+
+pub use connection_manager::TangledInitError;
 
 /// Maximum size of a message which fits into a single datagram.
 /// Somewhat arbitrary, but if it gets this large something probably went wrong.
