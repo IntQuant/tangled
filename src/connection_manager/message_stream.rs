@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use bitcode::{DecodeOwned, Encode};
 use quinn::{RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "log")]
 use tracing::trace;
 
 use super::DirectConnectionError;
@@ -61,6 +62,7 @@ impl<Msg: DecodeOwned> RecvMessageStream<Msg> {
             .read_u32()
             .await
             .map_err(|_err| DirectConnectionError::MessageIoFailed)?;
+        #[cfg(feature = "log")]
         trace!("Expecting message of len {len}");
         let mut buf = vec![0; len as usize];
         self.inner

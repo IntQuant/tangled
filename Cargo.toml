@@ -7,6 +7,9 @@ repository = "https://github.com/IntQuant/tangled"
 categories = ["network-programming", ]
 description = "Work-in-progress UDP networking crate."
 
+[features]
+default=["log"]
+log=["dep:tracing"]
 
 [[example]]
 name = "chat"
@@ -14,15 +17,16 @@ name = "chat"
 
 [dependencies]
 crossbeam = "0.8.4"
-tracing = "0.1.41"
+tracing = {version="0.1.41",optional = true}
 dashmap = "6.1.0"
 quinn = "0.11.9"
-rcgen = "0.14.4"
-thiserror = "2.0.16"
+rcgen = "0.14.5"
+thiserror = "2.0.17"
 tokio = { version = "1.47.1", features = ["macros", "io-util", "sync"] }
 bitcode = "0.6.7"
 socket2 = "0.6.0"
 
 [dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "io-util", "sync", "rt-multi-thread"] }
 test-log = { version = "0.2.18", default-features = false, features = ["trace"]}
 tracing-subscriber = {version = "0.3", features = ["env-filter", "fmt"]}

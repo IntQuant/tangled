@@ -7,13 +7,18 @@ use std::{
 
 use crossbeam::channel::bounded;
 use tangled::{Peer, Reliability};
+#[cfg(feature = "log")]
 use tracing::Level;
+#[cfg(feature = "log")]
 use tracing_subscriber::FmtSubscriber;
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    #[cfg(feature = "log")]
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
         .finish();
+    #[cfg(feature = "log")]
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let mut args = args().skip(1);

@@ -18,6 +18,7 @@ mod error;
 mod helpers;
 
 pub use common::*;
+#[cfg(feature = "log")]
 use tracing::debug;
 
 /// Represents a network endpoint. Can be constructed in either `host` or `client` mode.
@@ -44,6 +45,7 @@ impl Peer {
                 .send(NetworkEvent::PeerConnected(PeerId(0)))
                 .unwrap();
         }
+        #[cfg(feature = "log")]
         debug!("Starting connection manager");
         connection_manager.start()?;
         Ok(Peer { shared })
@@ -145,6 +147,7 @@ impl Drop for Peer {
 mod test {
     use std::time::Duration;
 
+    #[cfg(feature = "log")]
     use tracing::info;
 
     use crate::{NetworkEvent, Peer, PeerId, Reliability, Settings, common::Message};
@@ -157,6 +160,7 @@ mod test {
 
     #[test_log::test(tokio::test)]
     async fn test_peer() {
+        #[cfg(feature = "log")]
         info!("Starting test_peer");
         let settings: Option<Settings> = Some(Default::default());
         let addr = "127.0.0.1:56001".parse().unwrap();

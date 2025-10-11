@@ -26,6 +26,7 @@ use quinn::{
 use socket2::{Domain, Socket, Type};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "log")]
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -67,12 +68,14 @@ impl DirectPeer {
     async fn recv_task(shared: Arc<Shared>, recv_stream: RecvStream, remote_id: PeerId) {
         let mut recv_stream = message_stream::RecvMessageStream::new(recv_stream);
         while let Ok(msg) = recv_stream.recv().await {
+            #[cfg(feature = "log")]
             trace!("Received message from {remote_id}");
             if let Err(err) = shared
                 .internal_incoming_messages_s
                 .send((remote_id, msg))
                 .await
             {
+                #[cfg(feature = "log")]
                 warn!("Could not send message to channel: {err}. Stopping.");
                 break;
             }
@@ -88,14 +91,15 @@ impl DirectPeer {
         incoming: Incoming,
         assigned_peer_id: PeerId,
     ) -> Result<Self, DirectConnectionError> {
-        let connection = incoming
-            .await
-            .inspect_err(|err| warn!("Failed to accept connection: {err}"))?;
+        let connection = incoming.await.inspect_err(|err| {
+            #[cfg(feature = "log")]
+            warn!("Failed to accept connection: {err}")
+        })?;
 
-        let mut sender = connection
-            .open_uni()
-            .await
-            .inspect_err(|err| warn!("Failed to get send stream: {err}"))?;
+        let mut sender = connection.open_uni().await.inspect_err(|err| {
+            #[cfg(feature = "log")]
+            warn!("Failed to get send stream: {err}")
+        })?;
         sender
             .write_u16(assigned_peer_id.0)
             .await
@@ -103,6 +107,7 @@ impl DirectPeer {
 
         let (send_stream, recv_stream) = connection.open_bi().await?;
         tokio::spawn(Self::recv_task(shared, recv_stream, assigned_peer_id));
+        #[cfg(feature = "log")]
         debug!("Server: spawned recv task");
 
         Ok(Self {
@@ -116,19 +121,22 @@ impl DirectPeer {
         shared: Arc<Shared>,
         connection: Connecting,
     ) -> Result<Self, DirectConnectionError> {
-        let connection = connection
-            .await
-            .inspect_err(|err| warn!("Failed to initiate connection: {err}"))?;
+        let connection = connection.await.inspect_err(|err| {
+            #[cfg(feature = "log")]
+            warn!("Failed to initiate connection: {err}")
+        })?;
 
         let mut receiver = connection.accept_uni().await?;
         let peer_id = receiver
             .read_u16()
             .await
             .map_err(|_err| DirectConnectionError::InitialExchangeFailed)?;
+        #[cfg(feature = "log")]
         debug!("Got peer id {peer_id}");
 
         let (send_stream, recv_stream) = connection.accept_bi().await?;
         tokio::spawn(Self::recv_task(shared, recv_stream, PeerId::HOST));
+        #[cfg(feature = "log")]
         debug!("Client: spawned recv task");
 
         Ok(Self {
@@ -221,8 +229,10 @@ impl ConnectionManager {
                 .map_err(TangledInitError::CouldNotCreateEndpoint)?;
             if bind_addr.is_ipv6() {
                 if let Err(err) = socket.set_only_v6(false) {
+                    #[cfg(feature = "log")]
                     warn!("Failed to set socket to be not only v6: {}", err);
                 } else {
+                    #[cfg(feature = "log")]
                     info!("Enabled dualstack mode for socket");
                 };
             }
@@ -269,6 +279,7 @@ impl ConnectionManager {
         let mut peer_id_counter = 1;
         while shared.keep_alive.load(Ordering::Relaxed) {
             let Some(incoming) = endpoint.accept().await else {
+                #[cfg(feature = "log")]
                 debug!("Endpoint closed, stopping connection accepter task.");
                 return;
             };
@@ -284,6 +295,7 @@ impl ConnectionManager {
                     peer_id_counter += 1;
                 }
                 Err(err) => {
+                    #[cfg(feature = "log")]
                     warn!("Failed to accept connection: {err}")
                 }
             };
@@ -322,6 +334,7 @@ impl ConnectionManager {
                 }
             }
             InternalMessage::RemoteConnected(peer_id) => {
+                #[cfg(feature = "log")]
                 debug!("Got notified of peer {peer_id}");
                 self.shared
                     .internal_events_s
@@ -349,6 +362,7 @@ impl ConnectionManager {
                     .send(NetworkEvent::PeerConnected(peer_id))
                     .expect("channel to be open");
                 self.shared.remote_peers.insert(peer_id, RemotePeer);
+                #[cfg(feature = "log")]
                 debug!(
                     "Peer {} connected, total connected: {}",
                     peer_id,
@@ -368,6 +382,7 @@ impl ConnectionManager {
                         .map(|i| *i.key())
                         .collect::<Vec<_>>();
                     for conn_peer in peers {
+                        #[cfg(feature = "log")]
                         debug!("Notifying peer of {conn_peer}");
                         self.server_send_internal_message(
                             peer_id,
@@ -378,6 +393,7 @@ impl ConnectionManager {
                 }
             }
             InternalEvent::Disconnected(peer_id) => {
+                #[cfg(feature = "log")]
                 debug!("Peer {} disconnected", peer_id);
                 self.shared.direct_peers.remove(&peer_id);
                 self.shared
@@ -435,6 +451,7 @@ impl ConnectionManager {
     }
 
     async fn astart(mut self, host_conn: Option<Connecting>) {
+        #[cfg(feature = "log")]
         debug!("astart running");
         if let Some(host_conn) = host_conn {
             match DirectPeer::connect(self.shared.clone(), host_conn).await {
@@ -448,6 +465,7 @@ impl ConnectionManager {
                     self.shared.peer_state.store(PeerState::Connected);
                 }
                 Err(err) => {
+                    #[cfg(feature = "log")]
                     error!("Could not connect to host: {}", err);
                     self.shared.peer_state.store(PeerState::Disconnected);
                     return;
@@ -457,6 +475,7 @@ impl ConnectionManager {
         if self.is_server {
             let endpoint = self.endpoint.clone();
             tokio::spawn(Self::accept_connections(self.shared.clone(), endpoint));
+            #[cfg(feature = "log")]
             debug!("Started connection acceptor task");
         }
 
@@ -484,6 +503,7 @@ impl ConnectionManager {
             }
         }
 
+        #[cfg(feature = "log")]
         debug!("Closing endpoint");
         self.endpoint
             .close(0u32.into(), b"peer decided to disconnect");
@@ -501,6 +521,7 @@ impl ConnectionManager {
             })
             .transpose()?;
 
+        #[cfg(feature = "log")]
         debug!("Spawning astart task");
         tokio::spawn(self.astart(host_conn));
         Ok(())
